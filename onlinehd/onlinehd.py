@@ -138,7 +138,7 @@ class OnlineHD(object):
             epochs : int = 120,
             batch_size : Union[int, None, float] = 64,
             one_pass_fit : bool = True,
-            bootstrap : Union[float, str] = 0.01):
+            bootstrap : Union[float, str,int] = 0.01):
         '''
         Starts learning process using datapoints `x` as input points and `y`
         as their labels.
@@ -181,7 +181,7 @@ class OnlineHD(object):
         h = x if encoded else self.encode(x)
         if one_pass_fit:
             self._one_pass_fit(h, y, lr, bootstrap)
-        self._iterative_fit(h, y, lr, epochs, batch_size)
+        self._iterative_fit(h, y, lr, epochs, bootstrap)
         return self
 
     def to(self, *args):
