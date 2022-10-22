@@ -236,6 +236,9 @@ class OnlineHD(object):
         _fasthd.onepass(h_, y_, self.model, lr)
 
     def _iterative_fit(self, h, y, lr, epochs, batch_size):
+        r = torch.randperm(y.size(0))
+        y=y[r]
+        h=h[r,:]
         n = h.size(0)
         for epoch in range(epochs):
             for i in range(0, n, batch_size):

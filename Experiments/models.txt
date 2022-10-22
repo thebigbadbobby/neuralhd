@@ -1,0 +1,18 @@
+Non HDC:
+
+MLP
+2 layer nn
+
+SVM
+linear classifier
+
+OnlineHD:
+
+OnlineHDv1
+No regens, old training algorithm
+OnlineHDv2
+No regens, new training algorithm
+NeuralHDv1
+1+ regens, old training algorithm
+NeuralHDv2
+1+ regens, new training algorithm

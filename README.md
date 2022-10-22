@@ -56,3 +56,6 @@ If you use onlinehd code, please cite the following paper:
    "OnlineHD: Robust, Efficient, and Single-Pass Online Learning Using
    Hyperdimensional System", IEEE/ACM Design Automation and Test in Europe
    Conference (DATE), 2021.
+
+downdrafts create improvement
+1000<1024
