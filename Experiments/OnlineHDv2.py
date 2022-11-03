@@ -14,7 +14,7 @@ def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
 class OnlineHDv2:
     def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,lr=.0003):
         #Configure for hdb, hdc, and hde classes
-        print("test")
+        # print("test")
         self.mu=0
         self.sigma=1
         self.nClasses = classes
@@ -57,8 +57,7 @@ class OnlineHDv2:
             torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
             # else:
             # h[i:i+bsize]=temp
-
-            h[i:i+bsize].cos_()#.mul_(temp.sin_())
+            h[i:i+bsize].cos_().mul_(temp.sin_())
         # print(h.shape)
         return h
 
@@ -107,7 +106,7 @@ class OnlineHDv2:
                 else:
                     correct += 1
                 count += 1
-        return correct / count
+        return #correct / count
     
 
     def predict(self,x):
@@ -127,10 +126,10 @@ class OnlineHDv2:
         for j in range(epochs):
             # do one pass of training
             # print(self.classes[:,8])
-            result=self.train3(trainencoded, trainlabels)
-            trainaccuracy= self.test(trainencoded,trainlabels)
+            self.train3(trainencoded, trainlabels)
+            # trainaccuracy= self.test(trainencoded,trainlabels)
             # testaccuracy= self.test(testencoded,y_testtorch)
-            print(trainaccuracy)
+            # print(trainaccuracy)
         #            --------------
 
             # self.classes=torch.nn.functional.normalize(self.classes)

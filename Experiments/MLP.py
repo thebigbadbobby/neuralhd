@@ -23,11 +23,11 @@ import sklearn.preprocessing
 def runTraining(model, x_train, y_train, batchSize, epochs, learningRate):
   opt = RMSprop(learning_rate= learningRate)
   model.compile(optimizer = opt, loss= 'categorical_crossentropy', metrics = ['accuracy'])
-  model.summary()
+  # model.summary()
   print(np.shape(x_train), np.shape(y_train))
   history = model.fit(x_train, y_train,
                     batch_size = batchSize,
-                    epochs = epochs, validation_split = .2, verbose = 1)
+                    epochs = epochs, validation_split = .2, verbose = 0)
 #   plot_accuracies(history)
   return history.history['accuracy'][len(history.history['accuracy'])-1]
 
@@ -52,12 +52,11 @@ def fit(model,xtrain,ytrain,batchsize,epochs,learningrate):
 class MLP():
     def __init__(self, classes : int, features : int, dim : int = 400):
         model = Sequential()
-        model.add(Dense(features, activation='relu', input_shape=(features,)))
-        model.add(Dense(dim, activation='relu'))
+        model.add(Dense(dim, activation='relu',input_shape=(features,)))
         model.add(Dense(classes, activation="softmax"))
         self.model=model
-    def fit(self,xtrain,ytrain,epochs,batch_size,lr):
-        fit(self.model,xtrain,ytrain,epochs,batch_size,lr)
+    def fit(self,xtrain,ytrain,batch_size,epochs,lr):
+        fit(self.model,xtrain,ytrain,batch_size,epochs,lr)
     def __call__(self,xtest):
         yhat = self.model.predict(xtest)
         return np.array([row.argmax() for row in yhat])

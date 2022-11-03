@@ -3,6 +3,9 @@ import math
 import copy
 import torch
 import numpy as np
+import statistics
+from typing import Union
+
 def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     #Cosine Similarity
     eps = torch.tensor(eps, device=x1.device)
@@ -11,10 +14,10 @@ def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     cdist = x1 @ x2.T
     cdist.div_(norms1).div_(norms2)
     return cdist
-class NeuralHDv1:
+class NeuralHDBIC:
     def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,lr=.0003):
         #Configure for hdb, hdc, and hde classes
-        # print("test")
+        print("test")
         self.mu=0
         self.sigma=1
         self.nClasses = classes
@@ -32,13 +35,12 @@ class NeuralHDv1:
         self.basis = torch.normal(0,1,size=(self.dimensionality,self.nFeatures))
         # Initialize classification hypervectors
         self.classes = torch.zeros((self.nClasses, self.dimensionality))
-        # self.prevacc=0
-        # self.trainfunctions=[self.train,self.train2,self.train3]
+        self.prevacc=0
         # self.learningrate=.1
         # self.hdc = HD_classifier(self.dimensionality, self.nClasses, 0)
-        # self.trainaccuracies=[]
-        # self.testaccuracies=[]
-        # self.medians=[]
+        self.trainaccuracies=[]
+        self.testaccuracies=[]
+        self.medians=[]
     def __call__(self, x : torch.Tensor):
         #return predicted values
         return self.predict(x)
@@ -57,36 +59,56 @@ class NeuralHDv1:
             torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
             # else:
             # h[i:i+bsize]=temp
+
             h[i:i+bsize].cos_().mul_(temp.sin_())
         # print(h.shape)
         return h
-    def train(self,h,y):
-        # print("1")
-        # r=torch.randperm(y.size(0))
-        # y=y[r]
-        # h=h[r,:]
-        n = h.size(0)
-        batch_size = min([y.size(0), self.batch_size])#64
-        for i in range(0, n, batch_size):
-            h_ = h[i:i+batch_size]
-            y_ = y[i:i+batch_size]
-            scores = cos_cdist(h_, self.classes)#cos
-            y_pred = scores.argmax(1)
-            wrong = y_ != y_pred
+    def train3(self,h,y):
+        # def fit(self, data, label, param = None):
+        # print("3")
+        assert self.dimensionality == h.size(1)
+        #if self.first_fit:
+        #    sys.stderr.write("Fitting with configuration: %s \n" % str([(k,param[k]) for k in self.options]))
 
-            # computes alphas to update model
-            # alpha1 = 1 - delta[lbl] -- the true label coefs
-            # alpha2 = delta[max] - 1 -- the prediction coefs
-            aranged = torch.arange(h_.size(0), device=h_.device)
-            alpha1 = (1.0 - scores[aranged,y_]).unsqueeze_(1)
-            alpha2 = (scores[aranged,y_pred] - 1.0).unsqueeze_(1)
+        # Actual fitting
 
-            for lbl in y_.unique():
-                m1 = wrong & (y_ == lbl) # mask of missed true lbl
-                m2 = wrong & (y_pred == lbl) # mask of wrong preds
-                self.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
-                self.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
-    
+        # handling dropout
+
+        # fit
+        r = torch.randperm(y.size(0))
+        y=y[r]
+        h=h[r,:]
+        correct = 0
+        count = 0
+        for i in range(0,y.size(0),self.batch_size):
+            sample = h[i:i+self.batch_size] 
+            answers = y[i:i+self.batch_size]
+            #maxVal = -1
+            #guess = -1
+            #for m in range(self.nClasses):
+            #    val = kernel(self.classes[m], sample)
+            #    if val > maxVal:
+            #        maxVal = val
+            #        guess = m
+            vals = cos_cdist(sample, self.classes)
+            # print(vals)
+            guesses = vals.argmax(1)
+            # print(guesses)
+            for j in range(0,answers.size(0)):
+                if guesses[j] != answers[j]:
+                    # print(answers[j])
+                    self.classes[guesses[j]]-=self.learningrate*h[i+j]*(1-vals[0,guesses[j]])
+                    self.classes[answers[j]]+=self.learningrate*h[i+j]*(1-vals[0,answers[j]])
+                    # acc=self.test2(h[r][:100],y)
+                    # if acc<=self.prevacc:
+                    #     self.classes[guess]+=self.learningrate*h[i]
+                    #     self.classes[answer]-=self.learningrate*h[i]
+                    # else:
+                    #     self.prevacc=acc
+                else:
+                    correct += 1
+                count += 1
+        return correct / count
 
     def predict(self,x):
         #return predictions based on similarity of encoded inputs to classification hypervectors
@@ -110,15 +132,29 @@ class NeuralHDv1:
             # print("regenloop: " + str(i))
             # train for specified number of epochs
             # Do the train 
+            self.prevacc=0
+            maxval=0
+            temp=None
             for j in range(epochs):
                 # do one pass of training
                 # print(self.classes[:,8])
-                self.train(trainencoded, trainlabels)
-                # trainaccuracy= self.test(trainencoded,trainlabels)
+                result=self.train3(trainencoded, trainlabels)
+                trainaccuracy= self.test(trainencoded,trainlabels)
                 # testaccuracy= self.test(testencoded,y_testtorch)
                 # print(trainaccuracy)
+                # iterscorestrain.append(trainaccuracy)
+                # iterscorestest.append(testaccuracy)
 
+                if trainaccuracy>maxval:
+                    temp=copy.deepcopy(self.classes)
+                    maxval=trainaccuracy
+                    # print(testaccuracy)
+                # print(j)
+                self.classes=temp
             
+            # self.trainaccuracies+=iterscorestrain
+            # self.testaccuracies+=iterscorestest
+            # self.medians.append(np.median(np.array(iterscorestrain)))
                 # print(self.prevacc)
             #if its the last regeneration training, stop before doing another dimension drop; stop if 100% accuracy
             if i==regenloops:
@@ -155,7 +191,6 @@ class NeuralHDv1:
             # if self.batch_size==1:
             #     self.learningrate=self.learningrate/2
         return "error","error"
-
     def test(self,x_encoded, y_labels):
             yhat= cos_cdist(x_encoded, self.classes).argmax(1)
             return (yhat==y_labels).float().mean()

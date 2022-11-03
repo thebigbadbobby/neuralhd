@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import statistics
 from typing import Union
+import matplotlib.pyplot as plt
 
 def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     #Cosine Similarity
@@ -14,11 +15,11 @@ def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     cdist = x1 @ x2.T
     cdist.div_(norms1).div_(norms2)
     return cdist
-class NeuralHD2:
-    def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,trainopt=3,bestinclass=False,lr=.0003):
+class NeuralHDSpecial:
+    def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,trainopt=3,bestinclass=False,lr=.0003, multiencoder=True):
         #Configure for hdb, hdc, and hde classes
         print("test")
-        self.param={}
+        self.multiencoder=multiencoder
         self.mu=0
         self.sigma=1
         self.nClasses = classes
@@ -56,16 +57,26 @@ class NeuralHD2:
         temp = torch.empty(bsize, self.basis.shape[0], device=x.device, dtype=x.dtype)
 
         # we need batches to remove memory usage
-        for i in range(0, n, bsize):
-            torch.matmul(x[i:i+bsize], self.basis.T, out=temp)
+        if self.multiencoder:
+            for i in range(0, n, bsize):
+                torch.matmul(x[i:i+bsize], self.basis.T, out=temp)
 
-            # self.noise ... I haven't seen any indication that it works better 
-            # if self.noise:
-            torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
-            # else:
-            # h[i:i+bsize]=temp
+                # self.noise ... I haven't seen any indication that it works better 
+                # if self.noise:
+                torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
+                # else:
+                # h[i:i+bsize]=temp
+                h[i:i+bsize].cos_().mul_(temp.sin_())
+        else:
+            for i in range(0, n, bsize):
+                torch.matmul(x[i:i+bsize], self.basis.T, out=temp)
 
-            h[i:i+bsize].cos_()#.mul_(temp.sin_())
+                # self.noise ... I haven't seen any indication that it works better 
+                # if self.noise:
+                torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
+                # else:
+                # h[i:i+bsize]=temp
+                h[i:i+bsize].cos_().mul_(temp.sin_())
         # print(h.shape)
         return h
     def train(self,h,y):
@@ -146,7 +157,7 @@ class NeuralHD2:
     
     def train3(self,h,y):
         # def fit(self, data, label, param = None):
-        print("3")
+        # print("3")
         assert self.dimensionality == h.size(1)
         #if self.first_fit:
         #    sys.stderr.write("Fitting with configuration: %s \n" % str([(k,param[k]) for k in self.options]))
@@ -215,7 +226,7 @@ class NeuralHD2:
             # Do the train 
             self.prevacc=0
             iterscorestrain=[]
-            iterscorestest=[]
+            # iterscorestest=[]
             maxval=0
             temp=None
             for j in range(epochs):
@@ -224,7 +235,7 @@ class NeuralHD2:
                 result=self.trainfunctions[self.trainoption](trainencoded, trainlabels)
                 trainaccuracy= self.test(trainencoded,trainlabels)
                 # testaccuracy= self.test(testencoded,y_testtorch)
-                print(trainaccuracy)
+                # print(trainaccuracy)
                 iterscorestrain.append(trainaccuracy)
                 # iterscorestest.append(testaccuracy)
 
@@ -237,7 +248,7 @@ class NeuralHD2:
                 self.classes=temp
             
             self.trainaccuracies+=iterscorestrain
-            self.testaccuracies+=iterscorestest
+            # self.testaccuracies+=iterscorestest
             self.medians.append(np.median(np.array(iterscorestrain)))
                 # print(self.prevacc)
             #if its the last regeneration training, stop before doing another dimension drop; stop if 100% accuracy
@@ -275,29 +286,6 @@ class NeuralHD2:
             # if self.batch_size==1:
             #     self.learningrate=self.learningrate/2
         return "error","error"
-    def _iterative_fit(self, h, y, lr, epochs):
-        h=self.encode(h)
-        n = h.size(0)
-        for epoch in range(epochs):
-            for i in range(0, n, self.batch_size):
-                h_ = h[i:i+self.batch_size]
-                y_ = y[i:i+self.batch_size]
-                scores = cos_cdist(h_, self.classes)
-                y_pred = scores.argmax(1)
-                wrong = y_ != y_pred
-
-                # computes alphas to update model
-                # alpha1 = 1 - delta[lbl] -- the true label coefs
-                # alpha2 = delta[max] - 1 -- the prediction coefs
-                aranged = torch.arange(h_.size(0), device=h_.device)
-                alpha1 = (1.0 - scores[aranged,y_]).unsqueeze_(1)
-                alpha2 = (scores[aranged,y_pred] - 1.0).unsqueeze_(1)
-
-                for lbl in y_.unique():
-                    m1 = wrong & (y_ == lbl) # mask of missed true lbl
-                    m2 = wrong & (y_pred == lbl) # mask of wrong preds
-                    self.classes[lbl] += lr*(alpha1[m1]*h_[m1]).sum(0)
-                    self.classes[lbl] += lr*(alpha2[m2]*h_[m2]).sum(0)
     def test(self,x_encoded, y_labels):
             yhat= cos_cdist(x_encoded, self.classes).argmax(1)
             return (yhat==y_labels).float().mean()
@@ -309,3 +297,6 @@ class NeuralHD2:
             yhat[i]=torch.argmax(sims)
             i+=1
         return (yhat==y_labels).float().mean()
+    def plot(self):
+        plt.plot(range(0,len(self.trainaccuracies)),self.trainaccuracies)
+        plt.show()
