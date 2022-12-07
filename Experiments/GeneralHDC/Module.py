@@ -1,0 +1,242 @@
+import math
+import copy
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from abc import ABC, abstractmethod
+# identity=lambda x:x
+def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
+    #Cosine Similarity
+    eps = torch.tensor(eps, device=x1.device)
+    norms1 = x1.norm(dim=1).unsqueeze_(1).max(eps)
+    norms2 = x2.norm(dim=1).unsqueeze_(0).max(eps)
+    cdist = x1 @ x2.T
+    cdist.div_(norms1).div_(norms2)
+    return cdist
+def gaussian_kernel(mu,sigma, dim,nFeatures):
+    return torch.normal(mu,sigma,size=(dim,nFeatures))
+def stitched_kernel(algorithm, xtr, label,dim,modeldim,n):
+    newbasis=torch.zeros(dim,xtr.size(1))
+    i=0
+    while i<dim:
+        model=HDCModel(torch.unique(label).size(0),xtr.size(1),modeldim)
+        train_start(model,algorithm,xtr,label)
+        newbasis[i:i+n,:]=model.basis[keep_n_best_var(model.classes,n)]
+        i+=n
+    return newbasis
+def keep_n_best_var(classes,n):
+    var = torch.var(classes, 0) 
+    order = torch.argsort(-var)
+    return order[:n]
+
+
+class HDCModel:
+    def __init__(self, classes : int, features : int, dim : int = 400, kernel=None, classh=None):
+        #Configure for hdb, hdc, and hde classes
+        self.mu=0
+        self.sigma=1
+        self.nClasses = classes
+        self.nFeatures= features
+        #hypervector size
+        self.dimensionality=dim
+        # self.learningrate=lr
+        self.base = torch.empty(self.dimensionality).uniform_(0.0, 2*math.pi)
+        # Initialize basis in gaussian distribution
+        if kernel is not None:
+            self.basis = kernel 
+        else: 
+            self.basis=torch.normal(self.mu,self.sigma,size=(self.dimensionality,self.nFeatures))
+        # Initialize classification hypervectors
+        if classh is not None:
+            self.classes=torch.normal(0,1,(self.nClasses, self.dimensionality))
+        else:
+            self.classes = torch.zeros((self.nClasses, self.dimensionality))
+    def encode(self,x):
+        n = x.size(0)
+        bsize = min([x.size(1),1024])
+        h = torch.empty(n, self.basis.shape[0], device=x.device, dtype=x.dtype)
+        temp = torch.empty(bsize, self.basis.shape[0], device=x.device, dtype=x.dtype)
+
+        # we need batches to remove memory usage
+        for i in range(0, n, bsize):
+            torch.matmul(x[i:i+bsize], self.basis.T, out=temp)
+
+            # self.noise ... I haven't seen any indication that it works better 
+            # if self.noise:
+            torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
+            # else:
+            # h[i:i+bsize]=temp
+            h[i:i+bsize].cos_().mul_(temp.sin_())
+        return h
+    def __call__(self, x : torch.Tensor):
+        #return predicted values
+        return self.predict(x)
+    def predict(self,x):
+        #return predictions based on similarity of encoded inputs to classification hypervectors
+        return  cos_cdist(self.encode(x), self.classes).argmax(1)
+    def test(self,x_encoded, y_labels):
+        yhat= cos_cdist(x_encoded, self.classes).argmax(1)
+        return (yhat==y_labels).float().mean()
+class TrainProcess(ABC):
+    @abstractmethod
+    def apply(self, model, train, label,xtr):
+        #do something to model.classes
+        pass
+class FebHDVersion2(TrainProcess):
+    def __init__(self,batchsize : int, learningrate):
+        self.batch_size=batchsize
+        self.learningrate=learningrate
+    def apply(self,model,train,label,xtr):
+        tempclasses=torch.zeros(model.classes.shape)
+        norm=cos_cdist(train,model.classes).mean(0).unsqueeze(0)
+        for i in range(0,label.size(0),self.batch_size):
+            sample = train[i:i+self.batch_size] 
+            vals = cos_cdist(sample, model.classes)#/norm
+            guesses = vals.argmax(1)
+            for j in range(0,guesses.size(0)):
+                # model.classes[guesses[j]]+=self.learningrate*train[i+j]
+                tempclasses[guesses[j]]+=self.learningrate*train[i+j]
+        model.classes[:]=tempclasses
+        # model.classes=torch.nn.functional.normalize(model.classes)
+class FebHDRepeater(TrainProcess):
+    def __init__(self, component, maxreps):
+        self.component=component
+        self.maxreps=maxreps
+    def apply(self, model, train, label,xtr):
+        i=0
+        while i<self.maxreps and model.test(train, label)<1:
+            print(model.test(train, label))
+            label=cos_cdist(train, model.classes).argmax(1)
+            self.component.apply(model,train,label,xtr)
+            i+=1
+class ClassicVersion1(TrainProcess):
+    def __init__(self,batchsize : int, learningrate):
+        self.batch_size=batchsize
+        self.learningrate=learningrate
+    #Old OnlineHD implementation- usually a bit worse due to floating point error
+    def apply(self,model, train, label,xtr):
+        n = train.size(0)
+        batch_size = min([label.size(0), self.batch_size])#64
+        for i in range(0, n, batch_size):
+            h_ = train[i:i+batch_size]
+            y_ = label[i:i+batch_size]
+            scores = cos_cdist(h_, model.classes)#cos
+            y_pred = scores.argmax(1)
+            wrong = y_ != y_pred
+            # computes alphas to update model
+            # alpha1 = 1 - delta[lbl] -- the true label coefs
+            # alpha2 = delta[max] - 1 -- the prediction coefs
+            aranged = torch.arange(h_.size(0), device=h_.device)
+            alpha1 = (1.0 - scores[aranged,y_]).unsqueeze_(1)
+            alpha2 = (scores[aranged,y_pred] - 1.0).unsqueeze_(1)
+
+            for lbl in y_.unique():
+                m1 = wrong & (y_ == lbl) # mask of missed true lbl
+                m2 = wrong & (y_pred == lbl) # mask of wrong preds
+                model.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
+                model.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
+        return
+
+class ClassicVersion2(TrainProcess):
+    def __init__(self,batchsize : int, learningrate):
+        self.batch_size=batchsize
+        self.learningrate=learningrate
+    def apply(self,model, train, label,xtr):
+        assert model.dimensionality == train.size(1)
+
+        #I'm not certain if randomizing does anything
+        r = torch.randperm(label.size(0))
+        label=label[r]
+        train=train[r,:]
+        # correct = 0
+        # count = 0
+        for i in range(0,label.size(0),self.batch_size):
+            sample = train[i:i+self.batch_size] 
+            answers = label[i:i+self.batch_size]
+            vals = cos_cdist(sample, model.classes)
+            guesses = vals.argmax(1)
+            for j in range(0,answers.size(0)):
+                if guesses[j] != answers[j]:
+                    model.classes[guesses[j]]-=self.learningrate*train[i+j]*(1-vals[0,guesses[j]])
+                    model.classes[answers[j]]+=self.learningrate*train[i+j]*(1-vals[0,answers[j]])
+        return
+                # else:
+                #     correct += 1
+                # count += 1
+        return #correct / count
+class Normalize(TrainProcess):
+    def apply(self, model, train, label,xtr):
+        model.classes=torch.nn.functional.normalize(model.classes)
+        return
+class ResetLowVarianceDims(TrainProcess):
+    def __init__(self, percentDrop):
+        self.percentDrop=percentDrop
+    def apply(self,model, train, label,xtr):
+        normed_classes = torch.nn.functional.normalize(model.classes)
+        var = torch.var(normed_classes, 0) 
+        # assert len(var) == self.dimensionality
+        # rank each entry in variances from smallest to largest
+        order = torch.argsort(var)
+        #drop amountDrop bases
+        toDrop = order[:int(self.percentDrop*model.dimensionality)]
+        for i in toDrop:
+            #generate a new ith vector in the basis
+            model.basis[i] = torch.normal(model.mu,model.sigma, size=(model.nFeatures,)) ##I need to make this happen as a function of the model
+        #Update Classes
+        #            --------------
+        #This code was left out. Maybe useful?
+        for i in toDrop:
+            model.classes[:,i] = torch.zeros(model.nClasses)
+        train[:]=model.encode(xtr)
+        return
+class AddNoise(TrainProcess):
+    def __init__(self, noiseratio):
+        self.ratio=noiseratio
+    def apply(self, model, train,label,xtr):
+        model.basis[:]+=self.ratio*torch.normal(0,1,model.basis.shape)
+        train=model.encode(xtr)
+        print(model.basis[0][0])
+class TrainBlock(TrainProcess):
+    def __init__(self, components=[]):
+        self.components=components
+    def append_component(self, component):
+        self.components.append(component)
+    def apply(self, model, train,label,xtr):
+        #do something to model.classes
+        for component in self.components:
+            component.apply(model,train,label,xtr)
+        return
+    
+class TrainRepeater(TrainProcess):
+    def __init__(self, component, repetitions):
+        self.component=component
+        self.repetitions=repetitions
+    def apply(self, model, train, label,xtr):
+        for _ in range(self.repetitions):
+            self.component.apply(model,train,label,xtr)
+    def applyBIC(self, model,train,label,xtr):
+        maxval=0
+        temp=None
+        for _ in range(self.repetitions):
+            self.component.apply(model,train,label,xtr)
+            trainaccuracy=model.test(train,label)
+            if trainaccuracy>maxval:
+                temp=copy.deepcopy(model.classes)
+                maxval=trainaccuracy
+        model.classes[:]=temp
+class DebugPrinter(TrainProcess):
+    def __init__(self, whattoprint, function=lambda x:x):
+        self.whattoprint=whattoprint
+        self.function=function
+    def apply(self, model, train, label,xtr):
+        print(self.function(locals()[self.whattoprint]))
+
+def train_start(model,trainblock,xtr,ytr):
+    xencoded=model.encode(xtr)
+    trainblock.apply(model,xencoded,ytr,xtr)
+def eval_acc(model,xte,yte):
+    yhat=model(xte)
+    eval=[yhat[i]==yte[i] for i in range(len(yte))]
+    return sum(eval)/len(yte)
+
+OnlineHDv2=TrainRepeater(ClassicVersion2(64,.0001),15)

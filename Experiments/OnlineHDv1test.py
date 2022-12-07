@@ -1,4 +1,3 @@
-
 import math
 import copy
 import torch
@@ -11,7 +10,7 @@ def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     cdist = x1 @ x2.T
     cdist.div_(norms1).div_(norms2)
     return cdist
-class OnlineHDv2:
+class OnlineHDv1:
     def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,lr=.0003):
         #Configure for hdb, hdc, and hde classes
         # print("test")
@@ -60,55 +59,38 @@ class OnlineHDv2:
             h[i:i+bsize].cos_().mul_(temp.sin_())
         # print(h.shape)
         return h
-
-    def train3(self,h,y):
-        # def fit(self, data, label, param = None):
-        # print("3")
-        assert self.dimensionality == h.size(1)
-        #if self.first_fit:
-        #    sys.stderr.write("Fitting with configuration: %s \n" % str([(k,param[k]) for k in self.options]))
-
-        # Actual fitting
-
-        # handling dropout
-
-        # fit
-        # r = torch.randperm(y.size(0))
+    def train(self,h,y):
+        # print("1")
+        # r=torch.randperm(y.size(0))
         # y=y[r]
         # h=h[r,:]
-        correct = 0
-        count = 0
-        for i in range(0,y.size(0),self.batch_size):
-            sample = h[i:i+self.batch_size] 
-            answers = y[i:i+self.batch_size]
-            #maxVal = -1
-            #guess = -1
-            #for m in range(self.nClasses):
-            #    val = kernel(self.classes[m], sample)
-            #    if val > maxVal:
-            #        maxVal = val
-            #        guess = m
-            vals = cos_cdist(sample, self.classes)
-            # print(vals)
-            guesses = vals.argmax(1)
-            # print(guesses)
-            for j in range(0,answers.size(0)):
-                if guesses[j] != answers[j]:
-                    # print(answers[j])
-                    self.classes[guesses[j]]-=self.learningrate*h[i+j]*(1-vals[0,guesses[j]])
-                    # print("starting")
-                    # print((self.learningrate*h[i+j]*(1-vals[0,guesses[j]])).type())
-                    self.classes[answers[j]]+=self.learningrate*h[i+j]*(1-vals[0,answers[j]])
-                    # acc=self.test2(h[r][:100],y)
-                    # if acc<=self.prevacc:
-                    #     self.classes[guess]+=self.learningrate*h[i]
-                    #     self.classes[answer]-=self.learningrate*h[i]
-                    # else:
-                    #     self.prevacc=acc
-                else:
-                    correct += 1
-                count += 1
-        return #correct / count
+        batch_size = self.batch_size
+        n = h.size(0)
+        # print(self.learningrate)
+        # print(batch_size)
+        for i in range(0, n, batch_size):
+            h_ = h[i:i+batch_size]
+            y_ = y[i:i+batch_size]
+            scores = cos_cdist(h_, self.classes)#cos
+            y_pred = scores.argmax(1)
+            # print(y_pred)
+            wrong = y_ != y_pred
+
+            # computes alphas to update model
+            # alpha1 = 1 - delta[lbl] -- the true label coefs
+            # alpha2 = delta[max] - 1 -- the prediction coefs
+            aranged = torch.arange(h_.size(0), device=h_.device)
+            alpha1 = (1.0 - scores[aranged,y_]).unsqueeze_(1)
+            alpha2 = (scores[aranged,y_pred] - 1.0).unsqueeze_(1)
+
+            for lbl in range(0,9):
+                m1 = wrong & (y_ == lbl) # mask of missed true lbl
+                m2 = wrong & (y_pred == lbl) # mask of wrong preds
+                # print(m1,m2)
+                self.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
+                # print("starting1")
+                # print((self.learningrate*(alpha1[m1]*h_[m1]).sum(0)).type())
+                self.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
     
 
     def predict(self,x):
@@ -128,7 +110,7 @@ class OnlineHDv2:
         for j in range(epochs):
             # do one pass of training
             # print(self.classes[:,8])
-            self.train3(trainencoded, trainlabels)
+            self.train(trainencoded, trainlabels)
             # trainaccuracy= self.test(trainencoded,trainlabels)
             # testaccuracy= self.test(testencoded,y_testtorch)
             # print(trainaccuracy)

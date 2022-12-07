@@ -74,6 +74,7 @@ class OnlineHDv1:
             y_ = y[i:i+batch_size]
             scores = cos_cdist(h_, self.classes)#cos
             y_pred = scores.argmax(1)
+            # print(y_pred)
             wrong = y_ != y_pred
 
             # computes alphas to update model
@@ -83,10 +84,13 @@ class OnlineHDv1:
             alpha1 = (1.0 - scores[aranged,y_]).unsqueeze_(1)
             alpha2 = (scores[aranged,y_pred] - 1.0).unsqueeze_(1)
 
-            for lbl in y_.unique():
+            for lbl in y_.unique():#range(0,9)
                 m1 = wrong & (y_ == lbl) # mask of missed true lbl
                 m2 = wrong & (y_pred == lbl) # mask of wrong preds
+                # print(m1,m2)
                 self.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
+                # print("starting1")
+                # print((self.learningrate*(alpha1[m1]*h_[m1]).sum(0)).type())
                 self.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
     
 

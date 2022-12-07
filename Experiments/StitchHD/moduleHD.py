@@ -4,23 +4,11 @@ import copy
 import torch
 import numpy as np
 import statistics
-from typing import Union
 import matplotlib.pyplot as plt
-
-def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
-    #Cosine Similarity
-    eps = torch.tensor(eps, device=x1.device)
-    norms1 = x1.norm(dim=1).unsqueeze_(1).max(eps)
-    norms2 = x2.norm(dim=1).unsqueeze_(0).max(eps)
-    cdist = x1 @ x2.T
-    cdist.div_(norms1).div_(norms2)
-    return cdist
-class NeuralHDSpecial:
-    def __init__(self, classes : int, features : int, dim : int = 400, batch_size=1,trainopt=3,bestinclass=False,lr=.0003, multiencoder=True, dimfilter=False, epochmetric=None):
+class HDCModule:
+    def __init__(self, classes : int, features : int, dim : int = 400, trainopt=3,bestinclass=False, multiencoder=True):
         #Configure for hdb, hdc, and hde classes
         print("test")
-        self.epochmetric=epochmetric
-        self.dimfilter=dimfilter
         self.multiencoder=multiencoder
         self.mu=0
         self.sigma=1
@@ -28,11 +16,8 @@ class NeuralHDSpecial:
         self.nFeatures= features
         #hypervector size
         self.dimensionality=dim
-        self.learningrate=lr
-        self.batch_size=batch_size
+        # self.learningrate=lr
         self.base = torch.empty(self.dimensionality).uniform_(0.0, 2*math.pi)
-
-        self.dimmetric=torch.zeros(self.dimensionality)
 
         self.bestinclass=bestinclass
         #encoder
@@ -80,16 +65,16 @@ class NeuralHDSpecial:
                 torch.add(temp, self.base, out=h[i:i+bsize])#h[i:i+bsize]=temp# torch.add(temp, self.base, out=h[i:i+bsize])
                 # else:
                 # h[i:i+bsize]=temp
-                h[i:i+bsize].cos_()#.mul_(temp.sin_())
+                h[i:i+bsize].cos_().mul_(temp.sin_())
         # print(h.shape)
         return h
-    def train(self,h,y):
+    def train(self,h,y,learningrate, batch_size):
         print("1")
         # r=torch.randperm(y.size(0))
         # y=y[r]
         # h=h[r,:]
         n = h.size(0)
-        batch_size = min([y.size(0), self.batch_size])#64
+        batch_size = min([y.size(0), batch_size])#64
         for i in range(0, n, batch_size):
             h_ = h[i:i+batch_size]
             y_ = y[i:i+batch_size]
@@ -107,8 +92,8 @@ class NeuralHDSpecial:
             for lbl in y_.unique():
                 m1 = wrong & (y_ == lbl) # mask of missed true lbl
                 m2 = wrong & (y_pred == lbl) # mask of wrong preds
-                self.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
-                self.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
+                self.classes[lbl] += learningrate*(alpha1[m1]*h_[m1]).sum(0)
+                self.classes[lbl] += learningrate*(alpha2[m2]*h_[m2]).sum(0)
             # if self.test(h,y)<self.prevacc:
             #     for lbl in y_.unique():
             #         m1 = wrong & (y_ == lbl) # mask of missed true lbl
@@ -117,7 +102,7 @@ class NeuralHDSpecial:
             #         self.classes[lbl] -= self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
             # else:
             #     self.prevacc=self.test(h,y)
-    def train2(self,h,y):
+    def train2(self,h,y,learningrate, batch_size):
         # def fit(self, data, label, param = None):
         print("2")
         assert self.dimensionality == h.size(1)
@@ -146,8 +131,8 @@ class NeuralHDSpecial:
             # print(vals)
             guess = torch.argmax(vals)
             if guess != answer:
-                self.classes[guess]-=self.learningrate*h[i]*(1-vals[0,guess])
-                self.classes[answer]+=self.learningrate*h[i]*(1-vals[0,answer])
+                self.classes[guess]-=learningrate*h[i]*(1-vals[0,guess])
+                self.classes[answer]+=learningrate*h[i]*(1-vals[0,answer])
                 # acc=self.test2(h[r][:100],y)
                 # if acc<=self.prevacc:
                 #     self.classes[guess]+=self.learningrate*h[i]
@@ -159,7 +144,7 @@ class NeuralHDSpecial:
             count += 1
         return correct / count
     
-    def train3(self,h,y):
+    def train3(self,h,y,learningrate,batch_size):
         # def fit(self, data, label, param = None):
         # print("3")
         assert self.dimensionality == h.size(1)
@@ -176,9 +161,9 @@ class NeuralHDSpecial:
         h=h[r,:]
         correct = 0
         count = 0
-        for i in range(0,y.size(0),self.batch_size):
-            sample = h[i:i+self.batch_size] 
-            answers = y[i:i+self.batch_size]
+        for i in range(0,y.size(0),batch_size):
+            sample = h[i:i+batch_size] 
+            answers = y[i:i+batch_size]
             #maxVal = -1
             #guess = -1
             #for m in range(self.nClasses):
@@ -193,12 +178,8 @@ class NeuralHDSpecial:
             for j in range(0,answers.size(0)):
                 if guesses[j] != answers[j]:
                     # print(answers[j])
-                    self.classes[guesses[j]]-=self.learningrate*h[i+j]*(1-vals[0,guesses[j]])
-                    self.classes[answers[j]]+=self.learningrate*h[i+j]*(1-vals[0,answers[j]])
-                    if self.dimfilter:
-                        guessmeter=(sample[j]*self.classes[guesses[j]])
-                        answermeter=(sample[j]*self.classes[answers[j]])
-                        self.dimmetric+=guessmeter-answermeter
+                    self.classes[guesses[j]]-=learningrate*h[i+j]*(1-vals[0,guesses[j]])
+                    self.classes[answers[j]]+=learningrate*h[i+j]*(1-vals[0,answers[j]])
                     # acc=self.test2(h[r][:100],y)
                     # if acc<=self.prevacc:
                     #     self.classes[guess]+=self.learningrate*h[i]
@@ -216,15 +197,22 @@ class NeuralHDSpecial:
     def fit(self,traindata, trainlabels,
                    epochs,
                    regenloops,  # list of effective dimensions to reach 
-                   fractionToDrop # drop/regen rate 
+                   fractionToDrop, # drop/regen rate ,
+                   learningrate,
+                 batch_size,
+                 testsample,
+                 copynumbers=[]
                     ):
+        print(learningrate)
+        print(batch_size)
         # find encoded training vectors
-
+        modeloutput=[]
         # calculate amount of dropped dimensions based on percent and original dimension
         amountDrop = int(fractionToDrop * self.dimensionality)#self.param.D?
         # print("Updating times:", regenloops)
 
         for i in range(regenloops+1): # For each eDs to reach, will checkpoints
+            # r=torch.randperm(trainlabels.size(0))
             # compute new encoded data
             trainencoded = self.encode(traindata)
             # testencoded = self.encode(x_testtorch)
@@ -238,15 +226,17 @@ class NeuralHDSpecial:
             maxval=0
             temp=None
             for j in range(epochs):
+                r=torch.randperm(trainlabels.size(0))
                 # do one pass of training
                 # print(self.classes[:,8])
-                result=self.trainfunctions[self.trainoption](trainencoded, trainlabels)
-                trainaccuracy= self.test(trainencoded,trainlabels)
+                result=self.trainfunctions[self.trainoption](trainencoded, trainlabels,learningrate, batch_size)
+                trainaccuracy= self.test(trainencoded[r,:][:int(testsample*len(trainlabels))],trainlabels[r][:int(testsample*len(trainlabels))])
                 # testaccuracy= self.test(testencoded,y_testtorch)
                 # print(trainaccuracy)
                 iterscorestrain.append(trainaccuracy)
                 # iterscorestest.append(testaccuracy)
-
+                if len(self.trainaccuracies)+len(iterscorestrain) in copynumbers:
+                    modeloutput.append(copy.deepcopy(self))
                 if self.bestinclass and trainaccuracy>maxval:
                     temp=copy.deepcopy(self.classes)
                     maxval=trainaccuracy
@@ -261,24 +251,17 @@ class NeuralHDSpecial:
                 # print(self.prevacc)
             #if its the last regeneration training, stop before doing another dimension drop; stop if 100% accuracy
             if i==regenloops:
-                return #self.hdc,self.hde - unnecessary now that hdc and hde are within a class
+                return modeloutput#self.hdc,self.hde - unnecessary now that hdc and hde are within a class
             # print("regen" +str(i))
             #do the dimension drop and regeneration
             normed_classes = torch.nn.functional.normalize(self.classes)
             #calculate variances for each dimension
-            toDrop=None
-            if self.dimfilter:
-                order = torch.argsort(-self.dimmetric)
-                breakeven=torch.argmin(abs(self.dimmetric[order]))
-                #drop amountDrop bases
-                toDrop = order[:amountDrop]#amountdrop
-            else:
-                var = torch.var(normed_classes, 0) 
-                # assert len(var) == self.dimensionality
-                # rank each entry in variances from smallest to largest
-                order = torch.argsort(var)
-                #drop amountDrop bases
-                toDrop = order[:amountDrop]
+            var = torch.var(normed_classes, 0) 
+            assert len(var) == self.dimensionality
+            # rank each entry in variances from smallest to largest
+            order = torch.argsort(var)
+            #drop amountDrop bases
+            toDrop = order[:amountDrop]
             #            ----------------
             #attempted reverse drop
             # if amountDrop<0:
