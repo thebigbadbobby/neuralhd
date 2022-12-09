@@ -4,17 +4,21 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
-# identity=lambda x:x
-def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     #Cosine Similarity
+def cos_cdist(x1 : torch.Tensor, x2 : torch.Tensor, eps : float = 1e-8):
     eps = torch.tensor(eps, device=x1.device)
     norms1 = x1.norm(dim=1).unsqueeze_(1).max(eps)
     norms2 = x2.norm(dim=1).unsqueeze_(0).max(eps)
     cdist = x1 @ x2.T
     cdist.div_(norms1).div_(norms2)
     return cdist
+    #Normal Kernel generation
 def gaussian_kernel(mu,sigma, dim,nFeatures):
     return torch.normal(mu,sigma,size=(dim,nFeatures))
+    #Stitched kernel generation using multiple models
+    #dim=target dim
+    #n=number of dimensions taken from each model
+    #modeldim=dim of models being trained to get stitched dimensions
 def stitched_kernel(algorithm, xtr, label,dim,modeldim,n):
     newbasis=torch.zeros(dim,xtr.size(1))
     i=0
@@ -24,6 +28,7 @@ def stitched_kernel(algorithm, xtr, label,dim,modeldim,n):
         newbasis[i:i+n,:]=model.basis[keep_n_best_var(model.classes,n)]
         i+=n
     return newbasis
+    #neuralHD but keep best n instead of drop out worst n
 def keep_n_best_var(classes,n):
     var = torch.var(classes, 0) 
     order = torch.argsort(-var)
@@ -31,10 +36,10 @@ def keep_n_best_var(classes,n):
 
 
 class HDCModel:
-    def __init__(self, classes : int, features : int, dim : int = 400, kernel=None, classh=None):
+    def __init__(self, classes : int, features : int, dim : int = 400,mu=0,sigma=1, kernel=None, classh=None):
         #Configure for hdb, hdc, and hde classes
-        self.mu=0
-        self.sigma=1
+        self.mu=mu
+        self.sigma=sigma
         self.nClasses = classes
         self.nFeatures= features
         #hypervector size
@@ -105,10 +110,12 @@ class FebHDRepeater(TrainProcess):
     def apply(self, model, train, label,xtr):
         i=0
         while i<self.maxreps and model.test(train, label)<1:
-            print(model.test(train, label))
+            # print(model.test(train, label))
             label=cos_cdist(train, model.classes).argmax(1)
             self.component.apply(model,train,label,xtr)
             i+=1
+
+    #ClassicVersion1: sum before mult
 class ClassicVersion1(TrainProcess):
     def __init__(self,batchsize : int, learningrate):
         self.batch_size=batchsize
@@ -136,7 +143,7 @@ class ClassicVersion1(TrainProcess):
                 model.classes[lbl] += self.learningrate*(alpha1[m1]*h_[m1]).sum(0)
                 model.classes[lbl] += self.learningrate*(alpha2[m2]*h_[m2]).sum(0)
         return
-
+#ClassicVersion2: mult before sum
 class ClassicVersion2(TrainProcess):
     def __init__(self,batchsize : int, learningrate):
         self.batch_size=batchsize
@@ -160,14 +167,12 @@ class ClassicVersion2(TrainProcess):
                     model.classes[guesses[j]]-=self.learningrate*train[i+j]*(1-vals[0,guesses[j]])
                     model.classes[answers[j]]+=self.learningrate*train[i+j]*(1-vals[0,answers[j]])
         return
-                # else:
-                #     correct += 1
-                # count += 1
-        return #correct / count
+#Normalize classes
 class Normalize(TrainProcess):
     def apply(self, model, train, label,xtr):
         model.classes=torch.nn.functional.normalize(model.classes)
         return
+#drop dimensions - NeuralHD style
 class ResetLowVarianceDims(TrainProcess):
     def __init__(self, percentDrop):
         self.percentDrop=percentDrop
@@ -189,13 +194,15 @@ class ResetLowVarianceDims(TrainProcess):
             model.classes[:,i] = torch.zeros(model.nClasses)
         train[:]=model.encode(xtr)
         return
+#Change basis slightly
 class AddNoise(TrainProcess):
     def __init__(self, noiseratio):
         self.ratio=noiseratio
     def apply(self, model, train,label,xtr):
         model.basis[:]+=self.ratio*torch.normal(0,1,model.basis.shape)
-        train=model.encode(xtr)
-        print(model.basis[0][0])
+        train[:]=model.encode(xtr)
+        # print(model.basis[0][0])
+#put sequential training algorithms together in a schedule
 class TrainBlock(TrainProcess):
     def __init__(self, components=[]):
         self.components=components
@@ -206,7 +213,7 @@ class TrainBlock(TrainProcess):
         for component in self.components:
             component.apply(model,train,label,xtr)
         return
-    
+#repeat training algorithms
 class TrainRepeater(TrainProcess):
     def __init__(self, component, repetitions):
         self.component=component
@@ -224,19 +231,33 @@ class TrainRepeater(TrainProcess):
                 temp=copy.deepcopy(model.classes)
                 maxval=trainaccuracy
         model.classes[:]=temp
+#print stuff during training
 class DebugPrinter(TrainProcess):
     def __init__(self, whattoprint, function=lambda x:x):
         self.whattoprint=whattoprint
         self.function=function
     def apply(self, model, train, label,xtr):
         print(self.function(locals()[self.whattoprint]))
-
+#apply training with generalized applicability - ytr must be .long
 def train_start(model,trainblock,xtr,ytr):
     xencoded=model.encode(xtr)
     trainblock.apply(model,xencoded,ytr,xtr)
+#get accuracy
 def eval_acc(model,xte,yte):
     yhat=model(xte)
     eval=[yhat[i]==yte[i] for i in range(len(yte))]
     return sum(eval)/len(yte)
+#get inferred accuracy for unsupervised learning
+def eval_inferred_acc(model,xtrain,ytrain):
+    labels=model(xtrain)
+    yhat=torch.zeros(ytrain.shape)
+    modes=[]
+    for i in range(model.nClasses):
+        n=torch.mode(ytrain[labels==i]).values
+        modes.append(n)
+    for i in range(ytrain.shape[0]):
+        yhat[i]=modes[labels[i]]
+    eval=[yhat[i]==ytrain[i] for i in range(len(ytrain))]
+    return sum(eval)/len(ytrain)
 
-OnlineHDv2=TrainRepeater(ClassicVersion2(64,.0001),15)
+# OnlineHDv2=TrainRepeater(ClassicVersion2(64,.0001),15)
